@@ -91,48 +91,60 @@ try {
         sessionsScanned++
         const content = readFileSync(filePath, 'utf-8')
 
+        // First pass: map tool_use IDs to tool names
+        const toolNames = {}
+        for (const line of content.split('\n')) {
+          if (!line) continue
+          try {
+            const r = JSON.parse(line)
+            if (r.type === 'assistant' && r.message?.content) {
+              for (const block of r.message.content) {
+                if (block.type === 'tool_use' && block.id) {
+                  toolNames[block.id] = block.name
+                }
+              }
+            }
+          } catch {}
+        }
+
+        // Second pass: analyze Bash tool results only
         for (const line of content.split('\n')) {
           if (!line) continue
           try {
             const r = JSON.parse(line)
 
-            // Find Bash tool results in user records (tool_result blocks)
+            // Find tool results in user records, filter to Bash only
             if (r.type === 'user' && Array.isArray(r.message?.content)) {
               for (const block of r.message.content) {
-                if (block.type === 'tool_result' && typeof block.content === 'string') {
-                  totalBashCalls++
-                  const output = block.content
-                  if (output.length < 500) { shortCalls++; continue }
+                if (block.type !== 'tool_result' || typeof block.content !== 'string') continue
 
-                  const compressed = compress(output)
-                  if (compressed) {
-                    compressibleCalls++
-                    totalOriginalChars += output.length
-                    totalCompressedChars += compressed.length
-                    const ratio = ((1 - compressed.length / output.length) * 100)
+                // Only count Bash tool results
+                const toolName = toolNames[block.tool_use_id]
+                if (toolName !== 'Bash') continue
 
-                    if (ratio < 50) compressionBuckets['0-50%']++
-                    else if (ratio < 70) compressionBuckets['50-70%']++
-                    else if (ratio < 85) compressionBuckets['70-85%']++
-                    else if (ratio < 95) compressionBuckets['85-95%']++
-                    else compressionBuckets['95-100%']++
+                totalBashCalls++
+                const output = block.content
+                if (output.length < 500) { shortCalls++; continue }
 
-                    biggestSavings.push({
-                      original: output.length,
-                      compressed: compressed.length,
-                      ratio,
-                      preview: output.slice(0, 80).replace(/\n/g, ' '),
-                    })
-                  }
-                }
-              }
-            }
+                const compressed = compress(output)
+                if (compressed) {
+                  compressibleCalls++
+                  totalOriginalChars += output.length
+                  totalCompressedChars += compressed.length
+                  const ratio = ((1 - compressed.length / output.length) * 100)
 
-            // Also check assistant records for Bash tool_use to count calls
-            if (r.type === 'assistant' && r.message?.content) {
-              for (const block of r.message.content) {
-                if (block.type === 'tool_use' && block.name === 'Bash') {
-                  // counted via tool_result above
+                  if (ratio < 50) compressionBuckets['0-50%']++
+                  else if (ratio < 70) compressionBuckets['50-70%']++
+                  else if (ratio < 85) compressionBuckets['70-85%']++
+                  else if (ratio < 95) compressionBuckets['85-95%']++
+                  else compressionBuckets['95-100%']++
+
+                  biggestSavings.push({
+                    original: output.length,
+                    compressed: compressed.length,
+                    ratio,
+                    preview: output.slice(0, 80).replace(/\n/g, ' '),
+                  })
                 }
               }
             }

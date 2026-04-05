@@ -40,17 +40,16 @@ Use **contextzip** if you want a polished CLI with benchmarked filters for all o
 
 ## Token savings & cost impact
 
-Measured from a real developer's Claude Code sessions (107 sessions over 7 days):
+Measured from a real developer's Claude Code sessions (107 sessions, 7 days, Bash outputs only):
 
 ```
-  Tool results scanned:       6,023
-  Short output (< 500 chars): 4,284 (passed through unchanged)
-  Compressible outputs:       926
+  Bash outputs over 500 chars:  486
+  Compressible:                 213
   ─────────────────────────────────────────────────────
-  Original total:             5,202k chars
-  Compressed total:           1,049k chars
-  Reduction:                  79.8%
-  Tokens saved per week:      ~1,038,000
+  Original total:               806k chars
+  Compressed total:             215k chars
+  Reduction:                    73.3%
+  Tokens saved per week:        ~148,000
 ```
 
 Run the benchmark on your own sessions to see your numbers:
@@ -61,17 +60,16 @@ node benchmark.mjs
 
 ### What that means in dollars
 
-| Model | Input cost/1M tokens | Savings per dev/day | Savings per dev/month | 10-person team/month |
-|---|---|---|---|---|
-| Claude Sonnet 4.6 | $3.00 | $0.06 | $1.20 | **$12** |
-| Claude Opus 4.6 | $15.00 | $0.30 | $6.00 | **$60** |
-| Claude Opus 4.6 (heavy use) | $15.00 | $0.90 | $18.00 | **$180** |
+| Model | Input cost/1M tokens | Savings per dev/month | 10-person team/month |
+|---|---|---|---|
+| Claude Sonnet 4.6 | $3.00 | $1.77 | **$18** |
+| Claude Opus 4.6 | $15.00 | $8.86 | **$89** |
 
-The direct dollar savings are modest — the real value is **context window longevity**:
+The direct dollar savings per dev are modest. The real value is **context window longevity**:
 
 - **Fewer compactions.** Noisy bash output fills the context window faster, triggering auto-compaction that erases older context. With compression, sessions last longer before Claude "forgets" earlier work.
 - **Better cache hit rates.** Smaller tool outputs mean less cache churn. Claude Code's prompt caching works better when context grows predictably.
-- **Longer productive sessions.** On Sonnet (200k context), a session with 40 verbose bash calls adds ~60k tokens of noise — that's 30% of the window wasted on npm install logs. Compression recovers most of that.
+- **Longer productive sessions.** On Sonnet (200k context), verbose bash output across a session can add 10-15k tokens of noise. Compression recovers most of that.
 
 ### How this makes Claude Code faster
 
@@ -101,20 +99,18 @@ Across a session with 15 verbose bash calls, that's **~400k fewer cumulative tok
 4. **Better prompt cache hit rates.** Claude Code uses prompt caching — repeated context is read from cache (10x cheaper) instead of reprocessed. Smaller, more stable context = more cache hits. Large bash output insertions cause cache misses that cascade through subsequent turns.
 
 ```
-  Build-heavy session (50 bash calls, 100 turns):
+  Typical session (20 verbose bash calls, 80 turns):
   ──────────────────────────────────────────────────
   Without compression:
-    Cumulative bash noise:     ~50k tokens in context by turn 100
-    Tokens re-processed:       ~2.5M extra tokens over the session
-    Cache disruptions:         ~15 (each verbose output shifts cache boundaries)
+    Cumulative bash noise:     ~15k tokens in context by turn 80
+    Tokens re-processed:       ~600k extra tokens over the session
 
   With bash-compress:
-    Cumulative bash noise:     ~12k tokens (76% less)
-    Tokens re-processed:       ~600k extra tokens (saved ~1.9M)
-    Cache disruptions:         ~3 (most output stays under cache threshold)
+    Cumulative bash noise:     ~4k tokens (73% less)
+    Tokens re-processed:       ~160k extra tokens (saved ~440k)
 ```
 
-The speed improvement compounds. By turn 100 of a build-heavy session, you could be processing 30-50k fewer tokens per turn — that's measurably faster response times and significantly better cache economics.
+The speed improvement is subtle per-turn but compounds over long sessions. By turn 80 of a build-heavy session, you're processing ~11k fewer tokens per turn — that translates to slightly faster time-to-first-token and meaningfully better prompt cache hit rates.
 
 ### Enterprise scale
 
@@ -122,20 +118,19 @@ For teams on Anthropic's API (not the Pro/Max subscription), the savings compoun
 
 | Team size | Model | Tokens saved/month | Cost saved/month | Cost saved/year |
 |---|---|---|---|---|
-| 10 devs | Sonnet | 4M | $12 | **$144** |
-| 10 devs | Opus | 4M | $60 | **$720** |
-| 50 devs | Sonnet | 20M | $60 | **$720** |
-| 50 devs | Opus | 20M | $300 | **$3,600** |
-| 200 devs | Sonnet | 80M | $240 | **$2,880** |
-| 200 devs | Opus | 80M | $1,200 | **$14,400** |
-| 500 devs | Opus (heavy) | 600M | $9,000 | **$108,000** |
+| 10 devs | Sonnet | 6M | $18 | **$212** |
+| 10 devs | Opus | 6M | $89 | **$1,062** |
+| 50 devs | Sonnet | 30M | $89 | **$1,062** |
+| 50 devs | Opus | 30M | $443 | **$5,316** |
+| 200 devs | Opus | 118M | $1,772 | **$21,264** |
+| 500 devs | Opus | 295M | $4,430 | **$53,160** |
 
-> These are conservative estimates based on ~4k tokens saved per session, 5 sessions/dev/day, 20 workdays/month. Heavy-use teams running 10+ sessions/day with frequent builds and deploys save 3-5x more.
+> Based on measured data: ~148k tokens saved per dev per week, 4 weeks/month. Teams with heavier build/test cycles (CI-heavy, monorepos) will save more; teams doing mostly code review will save less.
 
 But the dollar savings are just part of the story. The bigger wins at enterprise scale:
 
-- **Fewer session restarts.** Devs lose 5-10 minutes of context switching each time a session runs out of context window. Across 200 devs, that's 50+ hours/month of productivity recovered.
-- **Reduced compaction amnesia.** When Claude auto-compacts, it forgets earlier decisions. Less context bloat = fewer compactions = better continuity across long tasks.
+- **Fewer session restarts.** Each session restart costs 5-10 minutes of context switching. Less context bloat = longer sessions = fewer restarts.
+- **Reduced compaction amnesia.** When Claude auto-compacts, it forgets earlier decisions. Less noise = fewer compactions = better continuity.
 - **Predictable API costs.** Token usage becomes more stable when bash noise is eliminated, making budget forecasting easier.
 
 ## What it compresses
@@ -213,20 +208,21 @@ node benchmark.mjs
 
 ```
   Sessions scanned (last 7 days): 107
-  Compressible outputs:           926
+  Bash outputs over 500 chars:    486
+  Compressible:                   213
 
   COMPRESSION RESULTS
   ───────────────────
-  Original total:     5202.4k chars
-  Compressed total:   1049.1k chars
-  Saved:              4153.2k chars (79.8% reduction)
-  Estimated tokens:   ~1,038,309 tokens saved
+  Original total:     805.8k chars
+  Compressed total:   215.9k chars
+  Saved:              589.9k chars (73.2% reduction)
+  Estimated tokens:   ~147,471 tokens saved
 
   COST PROJECTION (based on your data)
   ─────────────────────────────────────
-  Tokens saved/month:  ~4,153,236
-  Sonnet cost saved:   $12.46/month
-  Opus cost saved:     $62.30/month
+  Tokens saved/month:  ~589,884
+  Sonnet cost saved:   $1.77/month
+  Opus cost saved:     $8.85/month
 ```
 
 ## Tests
