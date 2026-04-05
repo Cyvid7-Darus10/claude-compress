@@ -10,7 +10,7 @@ claude-savings is a two-hook system for Claude Code: a PreToolUse hook that bloc
 
 ## Real impact
 
-Measured from 107 real Claude Code sessions (7 days):
+Measured from 107 real Claude Code sessions on a single machine (7 days). If you code across multiple machines, your savings scale proportionally — install the hook on each one.
 
 ```
   SAVINGS BREAKDOWN
@@ -128,7 +128,7 @@ Rare in normal usage (0 times in our 107-session benchmark), but when it fires i
 | 50 devs | Opus | $1,089 | **$13,068** |
 | 200 devs | Opus | $4,356 | **$52,272** |
 
-> Based on measured data: ~363k tokens saved per dev per week (264k from compression + 99k from blocked duplicate reads).
+> Based on measured data from a single machine: ~363k tokens saved per week (264k from compression + 99k from blocked duplicate reads). Developers working across multiple machines will see proportionally higher savings — install on each machine and run `node benchmark.mjs` to measure.
 
 ### How this makes Claude Code faster
 
