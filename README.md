@@ -1,8 +1,8 @@
 # claude-savings
 
-A lightweight Claude Code hook that compresses verbose tool output to save context window tokens.
+A lightweight Claude Code hook that saves tokens through output compression, loop detection, and duplicate read prevention.
 
-Every tool result stays in the conversation forever. A large file read, a verbose build log, a grep with 200 matches — all of it gets re-processed on every subsequent turn. This hook compresses it automatically, per-tool, with strategies that preserve what matters and strip what doesn't.
+Every tool result stays in the conversation forever. Verbose build logs, duplicate file reads, repeated failing commands — all waste tokens that could be spent on actual work. This hook catches all three automatically.
 
 ![demo](https://vhs.charm.sh/vhs-XbmoXiyGHgFy0WwjYYjis.gif)
 
@@ -11,20 +11,19 @@ Every tool result stays in the conversation forever. A large file read, a verbos
 Measured from 107 real Claude Code sessions (7 days):
 
 ```
-  COMPRESSION BY TOOL
-  ───────────────────
-  Tool              Compressed   Original    After    Saved
-  ──────────────────────────────────────────────────────
-  Bash                  211         807k     223k      72%
-  WebFetch               29         359k      36k      90%
-  Grep                   25         117k      29k      75%
-  Glob                    9          44k       9k      79%
-  ──────────────────────────────────────────────────────
-  TOTAL                 279       1,343k     305k    77.3%
-
-  Tokens saved/week:   ~260,000
-  Tokens saved/month:  ~1,039,000
+  SAVINGS BREAKDOWN
+  ─────────────────────────────────────────────────────
+  Strategy              Instances    Tokens saved/week
+  ─────────────────────────────────────────────────────
+  Output compression        287          ~264,000
+  Duplicate read warnings   309          ~316,000
+  Loop detection              —          (insurance)
+  ─────────────────────────────────────────────────────
+  TOTAL                                  ~580,000
+  Per month                           ~2,317,000
 ```
+
+Duplicate reads are the #1 waste — Claude re-reading files already in context adds the full file content to the conversation a second time. This happens ~309 times per week in normal usage.
 
 Run the benchmark on your own sessions:
 
@@ -32,35 +31,58 @@ Run the benchmark on your own sessions:
 node benchmark.mjs
 ```
 
-## Compression strategies
+## Three savings strategies
 
-Each tool type gets a tailored approach:
+### 1. Output compression (77% average reduction)
+
+Compresses verbose output from Bash, Grep, Glob, WebFetch, and WebSearch with per-tool strategies:
 
 | Tool | Strategy | What's kept | What's stripped |
 |---|---|---|---|
-| **Bash** | Strip noise, keep errors | Error messages, warnings, exit codes | Progress bars, repeated lines, install logs |
+| **Bash** | Strip noise, collapse stack traces | Errors, warnings, app-level frames | Progress bars, repeated lines, node_modules frames |
 | **Grep** | Truncate matches | First 15 + last 5 matches, total count | Excess matches beyond 30 |
 | **Glob** | Truncate file lists | First 20 files, total count | Excess files beyond 30 |
 | **WebFetch** | Strip HTML, truncate | Text content, first 20 + last 10 lines | `<script>`, `<style>`, HTML tags |
 | **WebSearch** | Truncate results | First 30 results | Excess results |
-| **Read** | Never compressed | Everything | Nothing — Claude needs full file content to make edits (94% of edits target the middle of files) |
-| **Edit/Write/Agent** | Never compressed | Everything | Nothing |
 
-Short output (<500 chars) always passes through unchanged.
+Smart stack trace handling — collapses `node_modules` and `internal/` frames while keeping your application frames:
 
-## Why this over alternatives
+```
+  Before (30 lines):                 After (5 lines):
+  TypeError: Cannot read 'id'       TypeError: Cannot read 'id'
+    at getUserProfile (users.ts:47)    at getUserProfile (users.ts:47)
+    at processAuth (auth.ts:12)        at processAuth (auth.ts:12)
+    at Layer.handle (node_modules/     (+ 28 framework frames hidden)
+      express/lib/router/layer.js)   Process exited with code 1
+    ... 25 more node_modules lines
+    ... 3 internal/modules lines
+  Process exited with code 1
+```
 
-| | claude-compress | [contextzip](https://github.com/jee599/contextzip) | [clauditor](https://github.com/IyadhKhalfallah/clauditor) |
-|---|---|---|---|
-| **Compresses** | All tools (Bash, Read, Grep, Glob, Web) | CLI output only | Bash output only |
-| **Install** | Copy 1 file | `npx` or `cargo install` | `npm install -g` + `clauditor install` |
-| **Dependencies** | None (just Node.js) | Rust binary + `jq` | 5 npm packages |
-| **Size** | 1 file, 200 lines | Full CLI + 6 filters | 31 source files, TUI, daemon |
-| **Overhead** | Fires on all tools, skips Edit/Write/Agent instantly | Wraps every command | PostToolUse on every tool call |
+### 2. Duplicate Read detection (~316k tokens/week saved)
 
-**Our edge:** Per-tool compression strategies. Other tools only handle bash/CLI output. We also compress Grep, Glob, WebFetch, and WebSearch — with strategies tailored to each tool type.
+Tracks which files Claude has read in each session. When Claude re-reads a file it already has in context, the hook injects a warning:
 
-> **Why not compress Read?** We tested it. 94% of edits to large files target the middle — exactly the part that would be stripped. Compressing Read would cause Claude to hallucinate or fail on nearly every edit. We measured this against 316 real Read→Edit sequences and decided the risk far outweighs the savings.
+```
+  [savings: DUPLICATE READ] src/auth.ts was already read in this session
+  (4.2k chars re-added to context). The file content is already in your
+  conversation history. Use Read with offset/limit instead.
+```
+
+This warns only once per file (not on 3rd, 4th read) to avoid nagging.
+
+> **Why not compress Read output?** We tested it. 94% of edits to large files target the middle — exactly the part that would be stripped. Compressing Read would cause Claude to hallucinate or fail on nearly every edit. We measured this against 316 real Read→Edit sequences.
+
+### 3. Loop detection (prevents 10-50k tokens per incident)
+
+Detects when Claude repeats the same tool call 3+ times with identical input and output — a sign it's stuck in a retry loop:
+
+```
+  [savings: LOOP DETECTED] "npm test" has produced the same result 3 times.
+  This is wasting tokens. Stop and try a different approach.
+```
+
+Doesn't fire often in normal usage (0 times in our 107-session benchmark), but when it does fire, it prevents the worst token waste — Claude burning through thousands of tokens retrying a command that will never succeed.
 
 ## Cost savings
 
@@ -68,22 +90,23 @@ Short output (<500 chars) always passes through unchanged.
 
 | Model | Tokens saved/month | Cost saved/month |
 |---|---|---|
-| Claude Sonnet 4.6 | ~1M | **$3.12** |
-| Claude Opus 4.6 | ~1M | **$15.58** |
+| Claude Sonnet 4.6 | ~2.3M | **$6.95** |
+| Claude Opus 4.6 | ~2.3M | **$34.76** |
 
 ### At scale
 
 | Team size | Model | Cost saved/month | Cost saved/year |
 |---|---|---|---|
-| 10 devs | Opus | $156 | **$1,870** |
-| 50 devs | Opus | $779 | **$9,348** |
-| 200 devs | Opus | $3,116 | **$37,392** |
+| 10 devs | Sonnet | $70 | **$834** |
+| 10 devs | Opus | $348 | **$4,171** |
+| 50 devs | Opus | $1,738 | **$20,856** |
+| 200 devs | Opus | $6,952 | **$83,424** |
 
-> Based on measured data: ~260k tokens saved per dev per week. Teams with heavier build/test cycles and more WebFetch usage save more.
+> Based on measured data: ~580k tokens saved per dev per week (264k from compression + 316k from duplicate read prevention).
 
 ### How this makes Claude Code faster
 
-This hook doesn't make Claude's inference faster — it reduces the tokens Claude re-processes every turn. A verbose output from turn 5 is still in context at turn 50:
+This hook doesn't speed up Claude's inference — it reduces the tokens Claude re-processes every turn:
 
 ```
   Turn 5:  Bash dumps 3,000 chars (750 tokens) into context
@@ -99,23 +122,37 @@ Effects:
 - **Better prompt cache hits** — stable context = more cache reuse (10x cheaper)
 - **Lower rate limit pressure** — fewer tokens per request
 
+## Why this over alternatives
+
+| | claude-savings | [contextzip](https://github.com/jee599/contextzip) | [clauditor](https://github.com/IyadhKhalfallah/clauditor) |
+|---|---|---|---|
+| **Strategies** | Compression + loop detection + dup read prevention | CLI output compression only | Session rotation + cache monitoring |
+| **Compresses** | Bash, Grep, Glob, WebFetch, WebSearch | CLI output only | Bash output only |
+| **Loop detection** | Yes (3+ identical calls) | No | Yes (Stop hook) |
+| **Duplicate reads** | Yes (warns on re-reads) | No | No |
+| **Stack traces** | Collapses framework frames | Collapses framework frames | No |
+| **Install** | Copy 1 file | `npx` or `cargo install` | `npm install -g` |
+| **Dependencies** | None | Rust binary + `jq` | 5 npm packages |
+| **Size** | 1 file, 280 lines | Full CLI + 6 filters | 31 files, TUI, daemon |
+
+> **Why not compress Read output?** We tested it — 94% of edits target the middle of files. Compressing Read would break Claude's ability to edit code. We warn on duplicate reads instead.
+
 ## Install
 
 ```bash
 # One-line install
-curl -fsSL https://raw.githubusercontent.com/Cyvid7-Darus10/claude-bash-compress/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Cyvid7-Darus10/claude-savings/main/install.sh | bash
 ```
 
 Or manually:
 
 ```bash
-# 1. Copy the hook
 mkdir -p ~/.claude/hooks
 curl -o ~/.claude/hooks/compress.mjs \
-  https://raw.githubusercontent.com/Cyvid7-Darus10/claude-bash-compress/main/compress.mjs
-
-# 2. Add to ~/.claude/settings.json
+  https://raw.githubusercontent.com/Cyvid7-Darus10/claude-savings/main/compress.mjs
 ```
+
+Add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -144,26 +181,26 @@ node compress.test.mjs
 ```
 
 ```
+── Output Compression ──
   ✓ Bash: passes through short output
   ✓ Bash: compresses npm install
   ✓ Bash: preserves error lines
+  ✓ Bash: collapses node_modules stack frames
   ✓ Bash: collapses repeated lines
-  ✓ Grep: passes through small results
-  ✓ Grep: truncates large result sets
-  ✓ Glob: passes through short file lists
-  ✓ Glob: truncates long file lists
-  ✓ Read: passes through small files
-  ✓ Read: trims very large files
-  ✓ Read: preserves moderate files (<100 lines)
-  ✓ WebFetch: strips HTML and compresses
-  ✓ WebSearch: truncates long results
-  ✓ WebSearch: passes through short results
-  ✓ Edit: never compressed
-  ✓ Write: never compressed
-  ✓ Agent: never compressed
-  ✓ handles malformed JSON
-  ✓ handles unknown tool with generic compression
-  ✓ truncates extremely long output
+  ✓ Grep / Glob / WebFetch / WebSearch
+  ✓ Read: never compressed
+  ✓ Edit/Write/Agent: never compressed
+
+── Loop Detection ──
+  ✓ no warning on first two identical calls
+  ✓ warns on third identical call
+  ✓ resets count when command changes
+
+── Duplicate Read Tracking ──
+  ✓ no warning on first read
+  ✓ warns on second read of same file
+  ✓ no warning for small files (<1k)
+  ✓ warns only once (not on 3rd, 4th read)
 
 20 passed, 0 failed
 ```
@@ -174,9 +211,12 @@ Edit the constants at the top of `compress.mjs`:
 
 | Constant | Default | Description |
 |---|---|---|
-| `MAX_CHARS` | 2000 | Maximum compressed output size (4000 for Read) |
+| `MAX_CHARS` | 2000 | Maximum compressed output size |
 | `MIN_CHARS` | 500 | Output shorter than this passes through unchanged |
-| `SKIP_TOOLS` | Edit, Write, Agent, ... | Tools that are never compressed |
+| `LOOP_THRESHOLD` | 3 | Identical calls before loop warning |
+| `SKIP_COMPRESS` | Read, Edit, Write, Agent, ... | Tools that are never compressed |
+
+State files are stored in `~/.claude-savings/` (loop counts and read history per session).
 
 ## License
 
