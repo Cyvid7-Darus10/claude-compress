@@ -1,4 +1,4 @@
-# claude-compress
+# claude-savings
 
 A lightweight Claude Code hook that compresses verbose tool output to save context window tokens.
 
