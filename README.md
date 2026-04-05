@@ -1,10 +1,10 @@
 # claude-savings
 
-**The #1 token waste in Claude Code isn't verbose output — it's Claude re-reading files it already has in context.**
+**Claude re-reads the same files 2-5 times per session. Every re-read dumps the full file into context again — pure waste.**
 
-We measured 107 real sessions and found that duplicate file reads waste **more tokens than all verbose bash/grep/web output combined**. No other tool catches this — and we don't just warn about it, we **block it before it happens**.
+We measured 107 real sessions: 68 exact duplicate reads wasting ~99k tokens/week, on top of ~264k tokens/week from verbose output. No other tool blocks duplicate reads — we intercept them **before they happen** via a PreToolUse hook.
 
-claude-savings is a two-hook system for Claude Code: a PreToolUse hook that blocks duplicate reads, and a PostToolUse hook for output compression and loop detection. Two files, zero dependencies, ~580k tokens saved per week — measured, not estimated.
+claude-savings is a two-hook system for Claude Code: a PreToolUse hook that blocks duplicate reads, and a PostToolUse hook for output compression and loop detection. Two files, zero dependencies, ~363k tokens saved per week — measured, not estimated.
 
 ![demo](https://vhs.charm.sh/vhs-XbmoXiyGHgFy0WwjYYjis.gif)
 
@@ -17,12 +17,12 @@ Measured from 107 real Claude Code sessions (7 days):
   ─────────────────────────────────────────────────────
   Strategy                  Instances    Tokens saved/week
   ─────────────────────────────────────────────────────
-  Duplicate read blocking       309          ~316,000
   Output compression            287          ~264,000
+  Duplicate read blocking        68           ~99,000
   Loop detection                  —          (insurance)
   ─────────────────────────────────────────────────────
-  TOTAL                                      ~580,000
-  Per month                               ~2,317,000
+  TOTAL                                      ~363,000
+  Per month                               ~1,452,000
 ```
 
 Run the benchmark on your own sessions:
@@ -35,7 +35,7 @@ node benchmark.mjs
 
 ### 1. Duplicate Read blocking — the big one (~316k tokens/week)
 
-Claude re-reads files it already has in context. A lot. We measured **309 duplicate reads per week** in normal usage. Each one adds the full file content to the conversation again — completely wasted tokens.
+Claude re-reads files it already has in context — same file, same parameters, 2-5 times per session. We measured **68 exact duplicate reads per week** across 107 sessions, wasting ~99k tokens. Each one re-adds the full file to the conversation for no reason.
 
 Other tools warn about this. We **block it**.
 
@@ -58,6 +58,19 @@ How it works:
 - Exact same read = **blocked** with `decision: "block"`
 - Different offset/limit = allowed (intentional partial re-reads)
 - State stored in `~/.claude-savings/read-cache.json`
+
+Real examples from measured sessions — files Claude re-read for no reason:
+
+```
+  Read 5x   4k    dashboard/index.html        (3,684 tokens wasted)
+  Read 4x   5k    BrandingSection.tsx          (4,041 tokens wasted)
+  Read 3x   18k   AboutSection.tsx             (8,868 tokens wasted)
+  Read 3x   10k   README.md                    (4,874 tokens wasted)
+  Read 2x   29k   leads/page.tsx               (7,160 tokens wasted)
+  Read 2x   15k   Navbar.tsx                   (3,822 tokens wasted)
+```
+
+These are exact duplicates — same file, same parameters, same content re-added to context.
 
 > **Why not compress Read output instead?** We tested it. 94% of edits to large files target the middle — exactly the part compression would strip. Compressing Read would cause Claude to hallucinate or fail on nearly every edit. We measured this against 316 real Read→Edit sequences. Blocking duplicates is the right approach — it saves the same tokens without breaking anything.
 
@@ -103,19 +116,19 @@ Rare in normal usage (0 times in our 107-session benchmark), but when it fires i
 
 | Model | Tokens saved/month | Cost saved/month |
 |---|---|---|
-| Claude Sonnet 4.6 | ~2.3M | **$6.95** |
-| Claude Opus 4.6 | ~2.3M | **$34.76** |
+| Claude Sonnet 4.6 | ~1.45M | **$4.36** |
+| Claude Opus 4.6 | ~1.45M | **$21.78** |
 
 ### At scale
 
 | Team size | Model | Cost saved/month | Cost saved/year |
 |---|---|---|---|
-| 10 devs | Sonnet | $70 | **$834** |
-| 10 devs | Opus | $348 | **$4,171** |
-| 50 devs | Opus | $1,738 | **$20,856** |
-| 200 devs | Opus | $6,952 | **$83,424** |
+| 10 devs | Sonnet | $44 | **$523** |
+| 10 devs | Opus | $218 | **$2,614** |
+| 50 devs | Opus | $1,089 | **$13,068** |
+| 200 devs | Opus | $4,356 | **$52,272** |
 
-> Based on measured data: ~580k tokens saved per dev per week (316k from blocked duplicate reads + 264k from compression).
+> Based on measured data: ~363k tokens saved per dev per week (264k from compression + 99k from blocked duplicate reads).
 
 ### How this makes Claude Code faster
 
@@ -146,7 +159,7 @@ Effects:
 | **Dependencies** | None | Rust binary + `jq` | 5 npm packages |
 | **Size** | 2 files, ~350 lines | Full CLI + 6 filters | 31 files, TUI, daemon |
 
-**Our edge:** We block the #1 token waste that nobody else addresses. Duplicate reads waste more tokens than all verbose output combined — and we're the only tool that prevents them.
+**Our edge:** We're the only tool that blocks duplicate reads via PreToolUse — preventing ~99k tokens/week of waste that other tools don't even detect. Combined with output compression (~264k tokens/week), this gives the most comprehensive token savings in one install.
 
 ## Install
 
