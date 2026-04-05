@@ -1,17 +1,16 @@
 #!/bin/bash
-# claude-bash-compress installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/Cyvid7-Darus10/claude-bash-compress/main/install.sh | bash
+# claude-savings installer
+# Usage: curl -fsSL https://raw.githubusercontent.com/Cyvid7-Darus10/claude-savings/main/install.sh | bash
 
 set -e
 
 HOOK_DIR="$HOME/.claude/hooks"
-HOOK_FILE="$HOOK_DIR/bash-compress.mjs"
 SETTINGS_FILE="$HOME/.claude/settings.json"
-REPO_URL="https://raw.githubusercontent.com/Cyvid7-Darus10/claude-bash-compress/main/bash-compress.mjs"
+REPO="https://raw.githubusercontent.com/Cyvid7-Darus10/claude-savings/main"
 
 echo ""
-echo "  claude-bash-compress installer"
-echo "  ──────────────────────────────"
+echo "  claude-savings installer"
+echo "  ────────────────────────"
 echo ""
 
 # Check Node.js
@@ -27,12 +26,20 @@ if [ "$NODE_VERSION" -lt 20 ]; then
 fi
 echo "  ✓ Node.js $(node -v) detected"
 
-# Download hook
+# Download both hooks
 mkdir -p "$HOOK_DIR"
-if curl -fsSL -o "$HOOK_FILE" "$REPO_URL"; then
-  echo "  ✓ Downloaded bash-compress.mjs to $HOOK_DIR/"
+
+if curl -fsSL -o "$HOOK_DIR/pre-read.mjs" "$REPO/pre-read.mjs"; then
+  echo "  ✓ Downloaded pre-read.mjs (blocks duplicate file reads)"
 else
-  echo "  ✗ Failed to download. Check your internet connection."
+  echo "  ✗ Failed to download pre-read.mjs"
+  exit 1
+fi
+
+if curl -fsSL -o "$HOOK_DIR/compress.mjs" "$REPO/compress.mjs"; then
+  echo "  ✓ Downloaded compress.mjs (output compression + loop detection)"
+else
+  echo "  ✗ Failed to download compress.mjs"
   exit 1
 fi
 
@@ -43,44 +50,56 @@ if [ ! -f "$SETTINGS_FILE" ]; then
   exit 1
 fi
 
-# Check if hook is already installed
-if grep -q "bash-compress" "$SETTINGS_FILE" 2>/dev/null; then
-  echo "  ✓ Hook already registered in settings.json (skipped)"
+# Check if already installed
+if grep -q "claude-savings\|pre-read.mjs" "$SETTINGS_FILE" 2>/dev/null; then
+  echo "  ✓ Hooks already registered in settings.json (skipped)"
   echo ""
   echo "  Done! Restart Claude Code to activate."
   echo ""
   exit 0
 fi
 
-# Add hook to settings.json using Node.js (safe JSON manipulation)
+# Add hooks to settings.json using Node.js (safe JSON manipulation)
 node -e "
 const fs = require('fs');
 const settings = JSON.parse(fs.readFileSync('$SETTINGS_FILE', 'utf-8'));
 
 if (!settings.hooks) settings.hooks = {};
-if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
 
-// Check if already installed
-const exists = settings.hooks.PostToolUse.some(h =>
-  h.hooks?.some(hook => hook.command?.includes('bash-compress'))
+// PreToolUse — block duplicate reads
+if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
+const preExists = settings.hooks.PreToolUse.some(h =>
+  h.hooks?.some(hook => hook.command?.includes('pre-read'))
 );
-
-if (!exists) {
-  settings.hooks.PostToolUse.unshift({
-    matcher: 'Bash',
-    hooks: [{
-      type: 'command',
-      command: 'node \"\$HOME/.claude/hooks/bash-compress.mjs\"'
-    }]
+if (!preExists) {
+  settings.hooks.PreToolUse.unshift({
+    matcher: 'Read',
+    hooks: [{ type: 'command', command: 'node \"\$HOME/.claude/hooks/pre-read.mjs\"' }]
   });
-  fs.writeFileSync('$SETTINGS_FILE', JSON.stringify(settings, null, 2) + '\n');
-  console.log('  ✓ Hook registered in settings.json');
-} else {
-  console.log('  ✓ Hook already registered (skipped)');
+  console.log('  ✓ PreToolUse hook registered (duplicate read blocking)');
 }
+
+// PostToolUse — compression + loop detection
+if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
+const postExists = settings.hooks.PostToolUse.some(h =>
+  h.hooks?.some(hook => hook.command?.includes('compress.mjs'))
+);
+if (!postExists) {
+  settings.hooks.PostToolUse.unshift({
+    matcher: '',
+    hooks: [{ type: 'command', command: 'node \"\$HOME/.claude/hooks/compress.mjs\"' }]
+  });
+  console.log('  ✓ PostToolUse hook registered (compression + loop detection)');
+}
+
+fs.writeFileSync('$SETTINGS_FILE', JSON.stringify(settings, null, 2) + '\n');
 "
 
 echo ""
 echo "  Done! Restart Claude Code to activate."
-echo "  Bash output over 500 chars will be automatically compressed."
+echo ""
+echo "  What's now active:"
+echo "    • Duplicate file reads are blocked (PreToolUse)"
+echo "    • Verbose output is compressed (PostToolUse)"
+echo "    • Repeated failing commands are detected (PostToolUse)"
 echo ""
