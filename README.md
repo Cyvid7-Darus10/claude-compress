@@ -40,17 +40,23 @@ Use **contextzip** if you want a polished CLI with benchmarked filters for all o
 
 ## Token savings & cost impact
 
-Real numbers from a typical Claude Code session:
+Measured from a real developer's Claude Code sessions (107 sessions over 7 days):
 
 ```
-  Bash calls per session:     ~40 (builds, tests, git, npm, etc.)
-  Avg output per call:        ~1,500 chars (~375 tokens)
-  Calls with verbose output:  ~15 per session (>500 chars)
-  Avg compression:            ~70% on verbose output
+  Tool results scanned:       6,023
+  Short output (< 500 chars): 4,284 (passed through unchanged)
+  Compressible outputs:       926
   ─────────────────────────────────────────────────────
-  Tokens saved per session:   ~4,000 tokens
-  Sessions per dev per day:   ~5
-  Tokens saved per dev/day:   ~20,000 tokens
+  Original total:             5,202k chars
+  Compressed total:           1,049k chars
+  Reduction:                  79.8%
+  Tokens saved per week:      ~1,038,000
+```
+
+Run the benchmark on your own sessions to see your numbers:
+
+```bash
+node benchmark.mjs
 ```
 
 ### What that means in dollars
@@ -176,6 +182,12 @@ Add this to your `hooks.PostToolUse` array in `~/.claude/settings.json`:
 }
 ```
 
+**Or use the one-line installer:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Cyvid7-Darus10/claude-bash-compress/main/install.sh | bash
+```
+
 That's it. No dependencies, no build step, no daemon. One file, zero config.
 
 Requires Node.js 20+.
@@ -190,6 +202,32 @@ Claude Code's [PostToolUse hook](https://docs.anthropic.com/en/docs/claude-code/
 4. Claude sees the compressed version alongside the original
 
 The `matcher: "Bash"` config ensures it only runs for Bash tool calls — zero overhead on Read, Edit, Write, Grep, etc.
+
+## Benchmark
+
+Measure real compression on your own Claude Code sessions:
+
+```bash
+node benchmark.mjs
+```
+
+```
+  Sessions scanned (last 7 days): 107
+  Compressible outputs:           926
+
+  COMPRESSION RESULTS
+  ───────────────────
+  Original total:     5202.4k chars
+  Compressed total:   1049.1k chars
+  Saved:              4153.2k chars (79.8% reduction)
+  Estimated tokens:   ~1,038,309 tokens saved
+
+  COST PROJECTION (based on your data)
+  ─────────────────────────────────────
+  Tokens saved/month:  ~4,153,236
+  Sonnet cost saved:   $12.46/month
+  Opus cost saved:     $62.30/month
+```
 
 ## Tests
 
