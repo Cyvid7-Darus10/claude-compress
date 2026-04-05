@@ -209,45 +209,9 @@ function detectLoop(sessionId, toolName, toolInput, toolResponse) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// 3. DUPLICATE READ TRACKING
+// 3. DUPLICATE READ BLOCKING (handled by pre-read.mjs PreToolUse hook)
+//    Blocks duplicate reads BEFORE they happen — zero tokens wasted.
 // ═══════════════════════════════════════════════════════════════════
-
-function trackDuplicateRead(sessionId, toolName, toolInput, outputLength) {
-  if (toolName !== 'Read') return null
-
-  const filePath = toolInput?.file_path
-  if (!filePath) return null
-
-  // Only warn for substantial reads (>1k chars)
-  if (outputLength < 1000) return null
-
-  const stateFile = resolve(STATE_DIR, 'read-state.json')
-  let state = readState(stateFile, {})
-
-  const key = sessionId || 'default'
-  if (!state[key]) state[key] = {}
-
-  const shortPath = filePath.split('/').slice(-3).join('/')
-
-  if (state[key][filePath]) {
-    const count = state[key][filePath] + 1
-    state[key][filePath] = count
-
-    // Only warn on 2nd read, not every subsequent one
-    if (count === 2) {
-      writeState(stateFile, state)
-      return `[savings: DUPLICATE READ] ${shortPath} was already read in this session (${(outputLength / 1000).toFixed(1)}k chars re-added to context). ` +
-        `The file content is already in your conversation history. If you need specific lines, use Read with offset/limit instead of re-reading the whole file.`
-    }
-
-    writeState(stateFile, state)
-    return null
-  }
-
-  state[key][filePath] = 1
-  writeState(stateFile, state)
-  return null
-}
 
 // ═══════════════════════════════════════════════════════════════════
 // Shared utilities
@@ -331,9 +295,6 @@ process.stdin.on('end', () => {
     const loopWarning = detectLoop(sessionId, toolName, input.tool_input, output)
     if (loopWarning) parts.push(loopWarning)
 
-    // 3. Duplicate read tracking
-    const dupWarning = trackDuplicateRead(sessionId, toolName, input.tool_input, output.length)
-    if (dupWarning) parts.push(dupWarning)
 
     if (parts.length > 0) {
       process.stdout.write(JSON.stringify({ additionalContext: parts.join('\n\n') }))
@@ -345,4 +306,4 @@ process.stdin.on('end', () => {
   }
 })
 
-export { compress, compressBash, compressGrep, compressGlob, compressWebFetch, compressWebSearch, detectLoop, trackDuplicateRead }
+export { compress, compressBash, compressGrep, compressGlob, compressWebFetch, compressWebSearch, detectLoop }

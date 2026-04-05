@@ -160,57 +160,65 @@ test('resets count when command changes', () => {
   assert.ok(!r.additionalContext?.includes('LOOP'), 'should not warn after command change')
 })
 
-console.log('\n── Duplicate Read Tracking ──')
+console.log('\n── Duplicate Read Blocking (PreToolUse) ──')
+
+const PRE_HOOK = resolve(__dirname, 'pre-read.mjs')
+
+function runPre(input) {
+  const result = execFileSync('node', [PRE_HOOK], {
+    input: JSON.stringify(input),
+    encoding: 'utf-8',
+    timeout: 5000,
+  })
+  return JSON.parse(result.trim())
+}
 
 // Clean state for dup tests
 try { rmSync(STATE_DIR, { recursive: true, force: true }) } catch {}
 
-test('no warning on first read', () => {
-  const r = run({
+test('allows first read of a file', () => {
+  const r = runPre({
     tool_name: 'Read',
     tool_input: { file_path: '/project/src/index.ts' },
-    tool_response: 'x'.repeat(2000),
-    session_id: 'dup-test-1',
+    session_id: 'block-test-1',
   })
-  assert.ok(!r.additionalContext?.includes('DUPLICATE'))
+  assert.ok(!r.decision, 'first read should not be blocked')
 })
 
-test('warns on second read of same file', () => {
+test('blocks second read of same file with same params', () => {
   const input = {
     tool_name: 'Read',
     tool_input: { file_path: '/project/src/app.ts' },
-    tool_response: 'x'.repeat(2000),
-    session_id: 'dup-test-2',
+    session_id: 'block-test-2',
   }
-  run(input)
-  const r2 = run(input)
-  assert.ok(r2.additionalContext?.includes('DUPLICATE READ'), 'should warn on re-read')
-  assert.ok(r2.additionalContext?.includes('app.ts'), 'should mention the file')
+  runPre(input)
+  const r2 = runPre(input)
+  assert.equal(r2.decision, 'block', 'second read should be blocked')
+  assert.ok(r2.reason?.includes('already read'), 'should explain why')
+  assert.ok(r2.reason?.includes('app.ts'), 'should mention the file')
 })
 
-test('no warning for small files (<1k)', () => {
-  const input = {
+test('allows same file with different offset/limit', () => {
+  const base = {
     tool_name: 'Read',
-    tool_input: { file_path: '/project/package.json' },
-    tool_response: '{"name": "test"}',
-    session_id: 'dup-test-3',
+    tool_input: { file_path: '/project/src/big.ts' },
+    session_id: 'block-test-3',
   }
-  run(input)
-  const r2 = run(input)
-  assert.ok(!r2.additionalContext?.includes('DUPLICATE'), 'small files should not warn')
+  runPre(base)
+  const r2 = runPre({
+    ...base,
+    tool_input: { file_path: '/project/src/big.ts', offset: 100, limit: 50 },
+  })
+  assert.ok(!r2.decision, 'different params should not be blocked')
 })
 
-test('warns only once (not on 3rd, 4th read)', () => {
-  const input = {
-    tool_name: 'Read',
-    tool_input: { file_path: '/project/src/repeat.ts' },
-    tool_response: 'x'.repeat(2000),
-    session_id: 'dup-test-4',
-  }
-  run(input)        // 1st — no warn
-  run(input)        // 2nd — warn
-  const r3 = run(input)  // 3rd — should NOT warn again
-  assert.ok(!r3.additionalContext?.includes('DUPLICATE'), '3rd read should not re-warn')
+test('passes through non-Read tools', () => {
+  const r = runPre({
+    tool_name: 'Bash',
+    tool_input: { command: 'ls' },
+    session_id: 'block-test-4',
+  })
+  assert.deepStrictEqual(r, {})
 })
 
 // Final cleanup
